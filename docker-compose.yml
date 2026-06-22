@@ -5,12 +5,19 @@ services:
       - "8000:8000"
     volumes:
       - ./backend/biblio.db:/app/biblio.db
+    environment:
+      - API_KEY=${API_KEY:-dev-key}
+      - MQTT_USER=${MQTT_USER:-}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
+      - MAX_OCCUPANCY=${MAX_OCCUPANCY:-500}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
 
   frontend:
     build:
       context: ./frontend
       args:
         VITE_API_URL: http://localhost:8000
+        VITE_API_KEY: ${API_KEY:-dev-key}
     ports:
       - "80:80"
     depends_on:

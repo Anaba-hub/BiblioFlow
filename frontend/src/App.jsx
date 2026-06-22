@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import OccupancyCounter from './components/OccupancyCounter'
 import HistoryChart from './components/HistoryChart'
 import PredictionChart from './components/PredictionChart'
+import StatsPanel from './components/StatsPanel'
 import { useWebSocket } from './hooks/useWebSocket'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -61,6 +62,8 @@ export default function App() {
             <OccupancyCounter occupation={occupation} connected={connected} />
           </div>
         </div>
+
+        <StatsPanel />
 
         <HistoryChart data={history} />
 

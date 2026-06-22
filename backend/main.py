@@ -1,13 +1,29 @@
 import asyncio
 import json
+import os
+import time as time_module
 from contextlib import asynccontextmanager
+from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
-from database import init_db, get_current_occupation, get_history
+from database import init_db, get_current_occupation, get_history, get_stats_today
 from mqtt_handler import MQTTHandler
 from predictor import get_prediction
+
+# ── Rate limiting ─────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
+
+# ── Auth ──────────────────────────────────────────────────────────
+API_KEY = os.getenv("API_KEY", "dev-key")
+
+async def verify_api_key(x_api_key: str = Header(None)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Clé API invalide ou manquante")
 
 # ── WebSocket Manager ─────────────────────────────────────────────
 class ConnectionManager:
@@ -39,6 +55,8 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 _loop: asyncio.AbstractEventLoop = None
+_mqtt_handler: MQTTHandler       = None
+_start_time: float               = None
 
 def on_mqtt_message(data: dict):
     """Bridge thread MQTT → coroutine asyncio (thread-safe)."""
@@ -48,57 +66,125 @@ def on_mqtt_message(data: dict):
 # ── Cycle de vie ──────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _loop
-    _loop = asyncio.get_running_loop()
+    global _loop, _mqtt_handler, _start_time
+    _loop       = asyncio.get_running_loop()
+    _start_time = time_module.time()
 
     init_db()
     print("[DB] SQLite initialisé")
 
-    mqtt = MQTTHandler(on_mqtt_message)
-    mqtt.start()
+    _mqtt_handler = MQTTHandler(on_mqtt_message)
+    _mqtt_handler.start()
 
     yield
 
-    mqtt.stop()
+    _mqtt_handler.stop()
     print("[MQTT] Déconnecté")
 
 # ── Application ───────────────────────────────────────────────────
-app = FastAPI(title="BiblioFlow API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="BiblioFlow API", version="2.0.0", lifespan=lifespan)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_methods=["GET"],
     allow_headers=["*"],
 )
 
-# ── Routes REST ───────────────────────────────────────────────────
+# ── Routes publiques ──────────────────────────────────────────────
+@app.get("/health")
+@limiter.limit("60/minute")
+def health(request: Request):
+    """Monitoring : état MQTT, DB et uptime."""
+    return {
+        "status":            "ok",
+        "mqtt_connected":    _mqtt_handler.is_connected if _mqtt_handler else False,
+        "db_accessible":     True,
+        "current_occupation": get_current_occupation(),
+        "uptime_seconds":    int(time_module.time() - _start_time) if _start_time else 0,
+    }
+
 @app.get("/occupation")
-def occupation():
+@limiter.limit("60/minute")
+def occupation(request: Request):
     """Occupation courante."""
     return {"occupation": get_current_occupation()}
 
 @app.get("/history")
-def history(limit: int = 100):
+@limiter.limit("30/minute")
+def history(request: Request, limit: int = 100):
     """Historique des événements (entrée/sortie)."""
+    limit = min(max(1, limit), 1000)
     return get_history(limit)
 
+@app.get("/stats")
+@limiter.limit("30/minute")
+def stats(request: Request):
+    """KPIs du jour : entrées, sorties, heure de pointe, tendance."""
+    return get_stats_today()
+
 @app.get("/prediction")
-def prediction():
-    """Prévision Prophet sur les 24 prochaines heures."""
+@limiter.limit("10/minute")
+def prediction(request: Request):
+    """Prévision Prophet sur les 24 prochaines heures (cache 30 min)."""
     return get_prediction()
+
+# ── Route protégée par API Key ────────────────────────────────────
+@app.get("/anomalies")
+@limiter.limit("20/minute")
+def anomalies(request: Request, _: None = Depends(verify_api_key)):
+    """Détection d'anomalie IA : compare occupation courante vs prévision Prophet."""
+    current = get_current_occupation()
+    pred    = get_prediction()
+
+    if pred.get("error") or not pred.get("forecast"):
+        return {
+            "anomaly":  False,
+            "reason":   "forecast_unavailable",
+            "current":  current,
+            "expected": None,
+            "message":  None,
+        }
+
+    now_hour = datetime.now().strftime("%Y-%m-%dT%H")
+    point    = next(
+        (p for p in pred["forecast"] if p["ds"].startswith(now_hour)),
+        pred["forecast"][0]
+    )
+
+    yhat   = point["yhat"]
+    spread = point["yhat_upper"] - point["yhat_lower"]
+    std    = spread / 3.92 if spread > 0 else 1.0   # 95 % CI → σ
+
+    deviation = (current - yhat) / std if std > 0 else 0.0
+    is_anomaly = abs(deviation) > 2.0
+
+    message = None
+    if is_anomaly:
+        direction = "au-dessus" if deviation > 0 else "en-dessous"
+        message = f"Occupation {abs(deviation):.1f}σ {direction} de la prévision ({yhat} attendu, {current} observé)"
+
+    return {
+        "anomaly":         bool(is_anomaly),
+        "current":         current,
+        "expected":        yhat,
+        "deviation_sigma": round(deviation, 2),
+        "message":         message,
+    }
 
 # ── WebSocket ─────────────────────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
-    # Envoi immédiat de l'occupation courante au nouveau client
     await ws.send_text(json.dumps({
         "occupation": get_current_occupation(),
         "event": "init"
     }))
     try:
         while True:
-            await ws.receive_text()   # maintient la connexion ouverte
+            await ws.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(ws)
