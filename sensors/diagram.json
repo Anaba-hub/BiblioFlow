@@ -15,14 +15,14 @@
       "id": "sensor_a",
       "top": -60,
       "left": 300,
-      "attrs": { "color": "green", "label": "Capteur A (Exterieur)" }
+      "attrs": { "color": "green", "label": "Capteur A (Exterieur)", "key": "a" }
     },
     {
       "type": "wokwi-pushbutton",
       "id": "sensor_b",
       "top": 60,
       "left": 300,
-      "attrs": { "color": "blue", "label": "Capteur B (Interieur)" }
+      "attrs": { "color": "blue", "label": "Capteur B (Interieur)", "key": "b" }
     },
     {
       "type": "wokwi-led",
