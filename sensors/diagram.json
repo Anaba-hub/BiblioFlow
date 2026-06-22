@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "author": "BiblioFlow",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-v1",
+      "id": "esp32",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "sensor_a",
+      "top": -60,
+      "left": 300,
+      "attrs": { "color": "green", "label": "Capteur A (Exterieur)" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "sensor_b",
+      "top": 60,
+      "left": 300,
+      "attrs": { "color": "blue", "label": "Capteur B (Interieur)" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_green",
+      "top": -60,
+      "left": 450,
+      "attrs": { "color": "green" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_amber",
+      "top": 0,
+      "left": 450,
+      "attrs": { "color": "yellow" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_red",
+      "top": 60,
+      "left": 450,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": -60,
+      "left": 520,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 0,
+      "left": 520,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r3",
+      "top": 60,
+      "left": 520,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-lcd1602",
+      "id": "lcd",
+      "top": 200,
+      "left": 200,
+      "attrs": {
+        "pins": "i2c",
+        "i2cAddress": "0x27"
+      }
+    }
+  ],
+  "connections": [
+    [ "esp32:D18", "sensor_a:1.l", "green",  [] ],
+    [ "esp32:D19", "sensor_b:1.l", "blue",   [] ],
+
+    [ "esp32:D25", "r1:1",         "green",  [] ],
+    [ "r1:2",      "led_green:A",  "green",  [] ],
+    [ "esp32:D26", "r2:1",         "red",    [] ],
+    [ "r2:2",      "led_red:A",    "red",    [] ],
+    [ "esp32:D27", "r3:1",         "yellow", [] ],
+    [ "r3:2",      "led_amber:A",  "yellow", [] ],
+
+    [ "esp32:D21", "lcd:SDA",      "blue",   [] ],
+    [ "esp32:D22", "lcd:SCL",      "yellow", [] ],
+    [ "esp32:5V",  "lcd:VCC",      "red",    [] ],
+
+    [ "sensor_a:2.l", "esp32:GND.1",   "black", [] ],
+    [ "sensor_b:2.l", "esp32:GND.1",   "black", [] ],
+    [ "led_green:C",  "esp32:GND.2",   "black", [] ],
+    [ "led_amber:C",  "esp32:GND.2",   "black", [] ],
+    [ "led_red:C",    "esp32:GND.2",   "black", [] ],
+    [ "lcd:GND",      "esp32:GND.2",   "black", [] ]
+  ]
+}
