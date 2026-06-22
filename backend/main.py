@@ -11,7 +11,10 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
-from database import init_db, get_current_occupation, get_history, get_stats_today
+from database import (
+    init_db, get_current_occupation, get_history, get_stats_today,
+    CAPACITY, get_status,
+)
 from mqtt_handler import MQTTHandler
 from predictor import get_prediction
 
@@ -71,7 +74,6 @@ async def lifespan(app: FastAPI):
     _start_time = time_module.time()
 
     init_db()
-    print("[DB] SQLite initialisé")
 
     _mqtt_handler = MQTTHandler(on_mqtt_message)
     _mqtt_handler.start()
@@ -82,7 +84,7 @@ async def lifespan(app: FastAPI):
     print("[MQTT] Déconnecté")
 
 # ── Application ───────────────────────────────────────────────────
-app = FastAPI(title="BiblioFlow API", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="BiblioFlow API", version="3.0.0", lifespan=lifespan)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -94,42 +96,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Helper ────────────────────────────────────────────────────────
+def _occupation_payload(occ: int) -> dict:
+    rate = round(occ / CAPACITY * 100, 1) if CAPACITY > 0 else 0.0
+    return {
+        "occupation": occ,
+        "capacity":   CAPACITY,
+        "rate":       rate,
+        "status":     get_status(rate),
+    }
+
 # ── Routes publiques ──────────────────────────────────────────────
 @app.get("/health")
 @limiter.limit("60/minute")
 def health(request: Request):
     """Monitoring : état MQTT, DB et uptime."""
+    occ = get_current_occupation()
     return {
-        "status":            "ok",
-        "mqtt_connected":    _mqtt_handler.is_connected if _mqtt_handler else False,
-        "db_accessible":     True,
-        "current_occupation": get_current_occupation(),
-        "uptime_seconds":    int(time_module.time() - _start_time) if _start_time else 0,
+        "status":             "ok",
+        "mqtt_connected":     _mqtt_handler.is_connected if _mqtt_handler else False,
+        "db_accessible":      True,
+        "current_occupation": occ,
+        "capacity":           CAPACITY,
+        "uptime_seconds":     int(time_module.time() - _start_time) if _start_time else 0,
     }
 
 @app.get("/occupation")
 @limiter.limit("60/minute")
 def occupation(request: Request):
-    """Occupation courante."""
-    return {"occupation": get_current_occupation()}
+    """Occupation courante avec capacité, taux et statut."""
+    return _occupation_payload(get_current_occupation())
 
 @app.get("/history")
 @limiter.limit("30/minute")
 def history(request: Request, limit: int = 100):
-    """Historique des événements (entrée/sortie)."""
+    """Historique complet : entrées, sorties, timeouts, demi-tours."""
     limit = min(max(1, limit), 1000)
     return get_history(limit)
 
 @app.get("/stats")
 @limiter.limit("30/minute")
 def stats(request: Request):
-    """KPIs du jour : entrées, sorties, heure de pointe, tendance."""
+    """KPIs du jour : entrées, sorties, suspects, heure de pointe, tendance."""
     return get_stats_today()
 
 @app.get("/prediction")
 @limiter.limit("10/minute")
 def prediction(request: Request):
-    """Prévision Prophet sur les 24 prochaines heures (cache 30 min)."""
+    """Prévision Prophet 24 h avec pic et alerte imminente (cache 30 min)."""
     return get_prediction()
 
 # ── Route protégée par API Key ────────────────────────────────────
@@ -155,10 +169,9 @@ def anomalies(request: Request, _: None = Depends(verify_api_key)):
         pred["forecast"][0]
     )
 
-    yhat   = point["yhat"]
-    spread = point["yhat_upper"] - point["yhat_lower"]
-    std    = spread / 3.92 if spread > 0 else 1.0   # 95 % CI → σ
-
+    yhat      = point["yhat"]
+    spread    = point["yhat_upper"] - point["yhat_lower"]
+    std       = spread / 3.92 if spread > 0 else 1.0
     deviation = (current - yhat) / std if std > 0 else 0.0
     is_anomaly = abs(deviation) > 2.0
 
@@ -179,10 +192,9 @@ def anomalies(request: Request, _: None = Depends(verify_api_key)):
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
-    await ws.send_text(json.dumps({
-        "occupation": get_current_occupation(),
-        "event": "init"
-    }))
+    payload = _occupation_payload(get_current_occupation())
+    payload["event"] = "init"
+    await ws.send_text(json.dumps(payload))
     try:
         while True:
             await ws.receive_text()

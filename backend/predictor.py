@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from prophet import Prophet
 
-from database import get_all_events
+from database import get_all_events, CAPACITY
 
 MIN_EVENTS = 10
 
@@ -25,7 +25,8 @@ def _compute_prediction() -> dict:
     if len(rows) < MIN_EVENTS:
         return {
             "error": f"Données insuffisantes — {len(rows)}/{MIN_EVENTS} événements enregistrés.",
-            "forecast": []
+            "forecast": [],
+            "peak": None,
         }
 
     df = pd.DataFrame(rows, columns=["ds", "y"])
@@ -36,7 +37,8 @@ def _compute_prediction() -> dict:
     if len(df) < 2:
         return {
             "error": "Données insuffisantes après agrégation horaire.",
-            "forecast": []
+            "forecast": [],
+            "peak": None,
         }
 
     model = Prophet(
@@ -61,4 +63,18 @@ def _compute_prediction() -> dict:
         .to_dict(orient="records")
     )
 
-    return {"error": None, "forecast": result}
+    # ── Calcul du pic et alerte imminente ─────────────────────────
+    peak_point = max(result, key=lambda p: p["yhat"])
+    peak_rate  = round(peak_point["yhat"] / CAPACITY * 100, 1) if CAPACITY > 0 else 0.0
+    alert_soon = any(
+        p["yhat"] / CAPACITY * 100 >= 70
+        for p in result[:3]
+    )
+    peak_info = {
+        "ds":        peak_point["ds"],
+        "yhat":      peak_point["yhat"],
+        "rate":      peak_rate,
+        "alert_soon": alert_soon,
+    }
+
+    return {"error": None, "forecast": result, "peak": peak_info}

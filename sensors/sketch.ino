@@ -143,6 +143,7 @@ void loop() {
     currentState = IDLE;
     showLCD("TIMEOUT", "Demi-tour!");
     Serial.println("[TIMEOUT] Occ=" + String(occupancy));
+    publish("timeout");
   }
 
   // ── Machine à états ──────────────────────────────────────────
@@ -177,6 +178,7 @@ void loop() {
         triggerTime = millis();
         showLCD("Demi-tour A", "Reset timeout");
         Serial.println("[DEMI-TOUR] reset");
+        publish("half_turn");
       }
       break;
 
@@ -193,6 +195,7 @@ void loop() {
         triggerTime = millis();
         showLCD("Demi-tour B", "Reset timeout");
         Serial.println("[DEMI-TOUR] reset");
+        publish("half_turn");
       }
       break;
   }

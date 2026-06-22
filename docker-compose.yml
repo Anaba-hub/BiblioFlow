@@ -9,6 +9,7 @@ services:
       - API_KEY=${API_KEY:-dev-key}
       - MQTT_USER=${MQTT_USER:-}
       - MQTT_PASSWORD=${MQTT_PASSWORD:-}
+      - CAPACITY=${CAPACITY:-50}
       - MAX_OCCUPANCY=${MAX_OCCUPANCY:-500}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
 
@@ -18,6 +19,7 @@ services:
       args:
         VITE_API_URL: http://localhost:8000
         VITE_API_KEY: ${API_KEY:-dev-key}
+        VITE_CAPACITY: ${CAPACITY:-50}
     ports:
       - "80:80"
     depends_on:

@@ -8,7 +8,7 @@ BROKER        = "broker.hivemq.com"
 PORT          = 1883
 TOPIC         = "biblio/occupation"
 MAX_OCCUPANCY = int(os.getenv("MAX_OCCUPANCY", "500"))
-VALID_EVENTS  = {"entry", "exit"}
+VALID_EVENTS  = {"entry", "exit", "timeout", "half_turn"}
 
 class MQTTHandler:
     def __init__(self, on_message_callback):
