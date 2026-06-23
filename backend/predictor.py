@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from prophet import Prophet
 
-from database import get_all_events, CAPACITY
+from database import get_all_events, get_capacity
 
 MIN_EVENTS = 10
 
@@ -64,10 +64,11 @@ def _compute_prediction() -> dict:
     )
 
     # ── Calcul du pic et alerte imminente ─────────────────────────
+    cap        = get_capacity()
     peak_point = max(result, key=lambda p: p["yhat"])
-    peak_rate  = round(peak_point["yhat"] / CAPACITY * 100, 1) if CAPACITY > 0 else 0.0
+    peak_rate  = round(peak_point["yhat"] / cap * 100, 1) if cap > 0 else 0.0
     alert_soon = any(
-        p["yhat"] / CAPACITY * 100 >= 70
+        p["yhat"] / cap * 100 >= 70
         for p in result[:3]
     )
     peak_info = {

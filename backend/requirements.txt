@@ -4,3 +4,4 @@ paho-mqtt
 prophet
 pandas
 slowapi
+PyJWT

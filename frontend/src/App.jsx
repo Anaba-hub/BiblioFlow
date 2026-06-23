@@ -5,34 +5,48 @@ import StatsPanel       from './components/StatsPanel'
 import HistoryTable     from './components/HistoryTable'
 import HistoryChart     from './components/HistoryChart'
 import PredictionChart  from './components/PredictionChart'
+import AdminLogin       from './components/AdminLogin'
+import AdminPanel       from './components/AdminPanel'
 import { useWebSocket } from './hooks/useWebSocket'
+import { useAuth }      from './hooks/useAuth'
 
 const API_URL          = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const CAPACITY_DEFAULT = parseInt(import.meta.env.VITE_CAPACITY || '50', 10)
 
+// Vues possibles : "public" | "login" | "admin"
 export default function App() {
-  const [occupation, setOccupation] = useState(null)
-  const [capacity,   setCapacity]   = useState(CAPACITY_DEFAULT)
-  const [history,    setHistory]    = useState([])
-  const [peakSoon,   setPeakSoon]   = useState(false)
-  const [peakRate,   setPeakRate]   = useState(null)
-  const [peakHour,   setPeakHour]   = useState(null)
+  const [view,      setView]      = useState('public')
+  const { isAdmin, loading: authLoading, error: authError, login, logout, authFetch } = useAuth()
 
-  // Taux et statut calculés côté client
+  const [occupation,        setOccupation]        = useState(null)
+  const [capacity,          setCapacity]          = useState(CAPACITY_DEFAULT)
+  const [thresholdWarning,  setThresholdWarning]  = useState(70)
+  const [thresholdCritical, setThresholdCritical] = useState(90)
+  const [history,           setHistory]           = useState([])
+  const [peakSoon,          setPeakSoon]          = useState(false)
+  const [peakRate,          setPeakRate]          = useState(null)
+  const [peakHour,          setPeakHour]          = useState(null)
+
   const rate   = capacity > 0 && occupation != null
     ? Math.round(occupation / capacity * 100)
     : 0
-  const status = rate >= 90 ? 'saturé' : rate >= 70 ? 'chargé' : 'normal'
+  const status = rate >= thresholdCritical ? 'saturé' : rate >= thresholdWarning ? 'chargé' : 'normal'
+
+  const applyOccupationData = useCallback((data) => {
+    if (data.occupation  !== undefined) setOccupation(data.occupation)
+    if (data.capacity    !== undefined) setCapacity(data.capacity)
+    if (data.threshold_warning  !== undefined) setThresholdWarning(data.threshold_warning)
+    if (data.threshold_critical !== undefined) setThresholdCritical(data.threshold_critical)
+  }, [])
 
   const fetchHistory = useCallback(async () => {
     try {
       const res  = await fetch(`${API_URL}/history?limit=100`)
       const data = await res.json()
       setHistory(data)
-    } catch { /* backend non accessible */ }
+    } catch { /* silencieux */ }
   }, [])
 
-  // Vérifie le pic prévu toutes les 5 minutes
   const fetchPeak = useCallback(async () => {
     try {
       const res  = await fetch(`${API_URL}/prediction`)
@@ -50,33 +64,76 @@ export default function App() {
       try {
         const res  = await fetch(`${API_URL}/occupation`)
         const data = await res.json()
-        setOccupation(data.occupation)
-        if (data.capacity) setCapacity(data.capacity)
-      } catch { /* backend non accessible */ }
+        applyOccupationData(data)
+      } catch { /* silencieux */ }
     }
     init()
     fetchHistory()
     fetchPeak()
     const peakTimer = setInterval(fetchPeak, 5 * 60_000)
     return () => clearInterval(peakTimer)
-  }, [fetchHistory, fetchPeak])
+  }, [applyOccupationData, fetchHistory, fetchPeak])
 
   const handleWsMessage = useCallback((data) => {
-    if (data.occupation !== undefined) setOccupation(data.occupation)
-    fetchHistory()
-  }, [fetchHistory])
+    // Mise à jour occupation + config si diffusion admin
+    applyOccupationData(data)
+    // Rafraîchir l'historique après tout événement
+    if (data.event && data.event !== 'init') fetchHistory()
+    // Si historique effacé par admin
+    if (data.event === 'history_cleared') setHistory([])
+  }, [applyOccupationData, fetchHistory])
 
   const connected = useWebSocket(handleWsMessage)
 
+  async function handleAdminLogin(username, password) {
+    const ok = await login(username, password)
+    if (ok) setView('admin')
+  }
+
+  function handleLogout() {
+    logout()
+    setView('public')
+  }
+
+  // ── Vue login ─────────────────────────────────────────────────
+  if (view === 'login') {
+    return (
+      <AdminLogin
+        onLogin={handleAdminLogin}
+        onBack={() => setView('public')}
+        loading={authLoading}
+        error={authError}
+      />
+    )
+  }
+
+  // ── Vue admin ─────────────────────────────────────────────────
+  if (view === 'admin' && isAdmin) {
+    return (
+      <AdminPanel
+        authFetch={authFetch}
+        onLogout={handleLogout}
+        onBack={() => setView('public')}
+      />
+    )
+  }
+
+  // ── Vue publique ──────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
+      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">
           BiblioFlow
           <span className="ml-2 text-sm font-normal text-gray-500">
             Monitoring d'occupation en temps réel
           </span>
         </h1>
+        <button
+          onClick={() => isAdmin ? setView('admin') : setView('login')}
+          className="text-sm px-4 py-1.5 rounded-lg bg-gray-800 text-white hover:bg-gray-700 transition-colors"
+        >
+          {isAdmin ? '⚙ Admin' : '🔒 Admin'}
+        </button>
       </header>
 
       <AlertBanner
